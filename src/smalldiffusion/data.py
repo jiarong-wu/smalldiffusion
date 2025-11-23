@@ -24,6 +24,80 @@ img_train_transform = tf.Compose([
 
 img_normalize = lambda x: ((x + 1)/2).clamp(0, 1)
 
+# My custom datasets
+# Note: should be multiworker friendly. Only numpy or CPU tensor.
+# ice free for now
+class npyData(Dataset):
+    def __init__(self, 
+        Xname, Fname, maskname, 
+        llim=0, rlim=-1, # chunking if needed
+        compute_stats=True, # if to compute mean/std from data
+        meanx=None, stdx=None, meanf=None, stdf=None # if passing precomputed stats (as numpy arrays of shape (C,))
+    ):
+        super().__init__()
+        # Load X and F using memory mapping
+        self.X = np.load(Xname, mmap_mode="r")[llim:rlim]
+        self.F = np.load(Fname, mmap_mode="r")[llim:rlim, 0:3] 
+        # Load mask directly
+        self.mask = np.load(maskname)
+        # Mean and std for normalization
+        if compute_stats:
+            print("Computing dataset mean and std...")
+            meanx, stdx, meanf, stdf = self._compute_mean_std()
+        else:
+            assert meanx is not None and stdx is not None, "Must provide meanx/stdx when compute_stats=False"
+            assert meanf is not None and stdf is not None, "Must provide meanf/stdf when compute_stats=False"
+        # Store as tensors (can be directly passed in)
+        self.meanx = torch.as_tensor(meanx, dtype=torch.float32)
+        self.stdx = torch.as_tensor(stdx, dtype=torch.float32)
+        self.meanf = torch.as_tensor(meanf, dtype=torch.float32)
+        self.stdf = torch.as_tensor(stdf, dtype=torch.float32)
+        # Final transform including normalization, can be different for X and F
+        self.tf_x = tf.Compose([
+            tf.Normalize(self.meanx.tolist(), self.stdx.tolist()),
+        ])
+        self.tf_f = tf.Compose([    
+            tf.Normalize(self.meanf.tolist(), self.stdf.tolist()), 
+        ])    
+        self.inv_tf_x = tf.Compose([
+            tf.Normalize(mean=[0]*len(self.meanx), std=(1/self.stdx).tolist()),
+            tf.Normalize(mean=(-(self.meanx/self.stdx)).tolist(), std=[1]*len(self.stdx))
+        ])
+        self.inv_tf_f = tf.Compose([    
+            tf.Normalize(mean=[0]*len(self.meanf), std=(1/self.stdf).tolist()),
+            tf.Normalize(mean=(-(self.meanf/self.stdf)).tolist(), std=[1]*len(self.stdf))
+        ])
+
+    def __len__(self):
+        return self.X.shape[0] - 1 # to prevent the last sample? Because Y = X[idx+1]
+    
+    def _compute_mean_std(self):
+        # Compute channel-wise mean and std for X and F over masked pixels only.
+        # Assumes X, F have shape (N, C, H, W) and mask has shape (H, W)
+        mask = self.mask.astype(bool)  # ensure boolean
+        mask_broadcast = mask[None, None, :, :]  # shape (1,1,H,W) to broadcast over N,C
+        # Apply mask
+        X_masked = self.X * mask_broadcast
+        F_masked = self.F * mask_broadcast
+        # Count of valid pixels per channel
+        n_pixels = mask.sum() * self.X.shape[0]
+        # channel-wise mean
+        meanx = X_masked.sum(axis=(0,2,3)) / n_pixels
+        meanf = F_masked.sum(axis=(0,2,3)) / n_pixels
+        # channel-wise std
+        stdx = np.sqrt(((X_masked - meanx[None,:,None,None])**2 * mask_broadcast).sum(axis=(0,2,3)) / n_pixels)
+        stdf = np.sqrt(((F_masked - meanf[None,:,None,None])**2 * mask_broadcast).sum(axis=(0,2,3)) / n_pixels)
+        return meanx, stdx, meanf, stdf
+
+    def __getitem__(self, idx):
+        # Convert np -> tensor first
+        x = torch.from_numpy(self.X[idx]).float()
+        f = torch.from_numpy(self.F[idx]).float()
+        # Apply transforms
+        x = self.tf_x(x)
+        f = self.tf_f(f)
+        return x, f
+
 
 ## Toy datasets
 

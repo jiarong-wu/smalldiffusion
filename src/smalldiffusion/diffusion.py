@@ -111,6 +111,27 @@ def training_loop(loader      : DataLoader,
             yield SimpleNamespace(**locals()) # For extracting training statistics
             accelerator.backward(loss)
             optimizer.step()
+            
+def my_training_loop(loader      : DataLoader,
+                  model       : nn.Module,
+                  schedule    : Schedule,
+                  accelerator : Optional[Accelerator] = None,
+                  epochs      : int = 10000,
+                  lr          : float = 1e-3,
+                  conditional : bool = True):
+    accelerator = accelerator or Accelerator()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    model, optimizer, loader = accelerator.prepare(model, optimizer, loader)
+    for _ in (pbar := tqdm(range(epochs))):
+        for x, f in loader:
+            model.train()
+            optimizer.zero_grad()
+            x0 = [x, f] # Concatenate inputs and conditions
+            x0, sigma, eps, cond = generate_train_sample(x0, schedule, conditional)
+            loss = model.get_loss(x0, sigma, eps, cond=cond)
+            yield SimpleNamespace(**locals()) # For extracting training statistics
+            accelerator.backward(loss)
+            optimizer.step()
 
 # Generalizes most commonly-used samplers:
 #   DDPM       : gam=1, mu=0.5

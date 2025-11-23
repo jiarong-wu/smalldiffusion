@@ -23,3 +23,7 @@ __pycache__
 /env/
 .venv
 .coverage
+
+# data files and results
+/examples/results/*
+/datasets/*
