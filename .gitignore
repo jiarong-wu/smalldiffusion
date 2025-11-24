@@ -25,5 +25,5 @@ __pycache__
 .coverage
 
 # data files and results
-/examples/results/*
+/run/results/*
 /datasets/*

@@ -15,8 +15,8 @@ from waveutils import plot_sample
 def main(train_batch_size=1024, epochs=300, sample_batch_size=64):
     # Setup
     a = Accelerator()
-    train = npyData('train/wave.npy', 'train/forcing.npy', 'train/mask.npy', compute_stats=True)
-    test = npyData('test/wave.npy', 'test/forcing.npy', 'test/mask.npy', compute_stats=False,
+    train = npyData('../datasets/train/wave.npy', '../datasets/train/forcing.npy', '../datasets/train/mask.npy', compute_stats=True)
+    test = npyData('../datasets/test/wave.npy', '../datasets/test/forcing.npy', '../datasets/test/mask.npy', compute_stats=False,
                     meanx=train.meanx, stdx=train.stdx, meanf=train.meanf, stdf=train.stdf)
     loader = DataLoader(train, batch_size=train_batch_size, shuffle=True)
     # Used for generating samples during training
@@ -44,9 +44,9 @@ def main(train_batch_size=1024, epochs=300, sample_batch_size=64):
         x0_ = train.inv_tf_x(x0)
         f_ = train.inv_tf_f(f)
         fig = plot_sample(x0_.detach().cpu().numpy(), f_.detach().cpu().numpy())
-        fig.savefig('results/' + 'sample.png')
-        torch.save(model.state_dict(), 'results/' + 'checkpoint.pth')
+        fig.savefig('../run/results/' + 'sample.png')
+        torch.save(model.state_dict(), '../run/results/' + 'checkpoint.pth')
     
 
 if __name__=='__main__':
-    main(train_batch_size=8, epochs=10, sample_batch_size=2)
+    main(train_batch_size=32, epochs=400, sample_batch_size=2)
