@@ -12,7 +12,7 @@ from smalldiffusion.diffusion import ScheduleLogLinear, samples, my_training_loo
 from waveutils import plot_sample
 
 
-def main(train_batch_size=1024, epochs=300, sample_batch_size=64):
+def main(train_batch_size=1024, epochs=300, sample_batch_size=64, RESUME=False, weights_file=None):
     # Setup
     a = Accelerator()
     train = npyData('../datasets/train/wave.npy', '../datasets/train/forcing.npy', '../datasets/train/mask.npy', compute_stats=True)
@@ -25,13 +25,20 @@ def main(train_batch_size=1024, epochs=300, sample_batch_size=64):
     
     schedule = ScheduleLogLinear(sigma_min=0.01, sigma_max=20, N=800)
     model = Scaled(myUnet)(in_dim=64, in_ch=4, out_ch=4, ch=64, precond_ch=3, ch_mult=(1, 2, 2), attn_resolutions=(16,))
+    
+    # Load weights if resuming
+    if RESUME and weights_file is not None:
+        model.load_state_dict(torch.load(weights_file, map_location='cpu'))
 
     # Train
+    log_file = open("../run/results/loss_log.txt", "w")
     ema = EMA(model.parameters(), decay=0.999)
     ema.to(a.device)
     for ns in my_training_loop(loader, model, schedule, epochs=epochs, lr=7e-4, accelerator=a):
+        log_file.write(f"{ns.loss.item():.5}\n")
         ns.pbar.set_description(f'Loss={ns.loss.item():.5}')
         ema.update()
+    log_file.close()
 
     # Sample
     with ema.average_parameters():
@@ -42,11 +49,13 @@ def main(train_batch_size=1024, epochs=300, sample_batch_size=64):
         # TODO: write some diagnostic code to visualize samples
         # save_image(img_normalize(make_grid(x0)), 'samples.png')
         x0_ = train.inv_tf_x(x0)
+        x_ = train.inv_tf_x(x)
         f_ = train.inv_tf_f(f)
-        fig = plot_sample(x0_.detach().cpu().numpy(), f_.detach().cpu().numpy())
-        fig.savefig('../run/results/' + 'sample.png')
+        for i in range(sample_batch_size):
+            fig = plot_sample(x0_.detach().cpu().numpy()[i], x_.detach().cpu().numpy()[i], f_.detach().cpu().numpy()[i])
+            fig.savefig('../run/results/' + f'sample{i}.png')
         torch.save(model.state_dict(), '../run/results/' + 'checkpoint.pth')
     
 
 if __name__=='__main__':
-    main(train_batch_size=32, epochs=400, sample_batch_size=2)
+    main(train_batch_size=32, epochs=400, sample_batch_size=2, RESUME=True, weights_file='../run/results/checkpoint_400.pth')
