@@ -24,6 +24,9 @@ def main(train_batch_size=1024, epochs=300, sample_batch_size=64, RESUME=False, 
     loader_test_iter = iter(loader_test)
     
     schedule = ScheduleLogLinear(sigma_min=0.01, sigma_max=20, N=800)
+    
+    # in_ch: number of condition channels + 1 for noise
+    # out_ch: number of predicted quantities
     model = Scaled(myUnet)(in_dim=64, in_ch=4, out_ch=4, ch=64, precond_ch=3, ch_mult=(1, 2, 2), attn_resolutions=(16,))
     
     # Load weights if resuming
@@ -58,4 +61,4 @@ def main(train_batch_size=1024, epochs=300, sample_batch_size=64, RESUME=False, 
     
 
 if __name__=='__main__':
-    main(train_batch_size=32, epochs=400, sample_batch_size=2, RESUME=True, weights_file='../run/results/checkpoint_400.pth')
+    main(train_batch_size=32, epochs=200, sample_batch_size=10, RESUME=True, weights_file='../run/results/checkpoint_200.pth')

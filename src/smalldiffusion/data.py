@@ -82,11 +82,11 @@ class npyData(Dataset):
         # Count of valid pixels per channel
         n_pixels = mask.sum() * self.X.shape[0]
         # channel-wise mean
-        meanx = X_masked.sum(axis=(0,2,3)) / n_pixels
-        meanf = F_masked.sum(axis=(0,2,3)) / n_pixels
+        meanx = np.nansum(X_masked, axis=(0,2,3)) / n_pixels
+        meanf = np.nansum(F_masked, axis=(0,2,3)) / n_pixels
         # channel-wise std
-        stdx = np.sqrt(((X_masked - meanx[None,:,None,None])**2 * mask_broadcast).sum(axis=(0,2,3)) / n_pixels)
-        stdf = np.sqrt(((F_masked - meanf[None,:,None,None])**2 * mask_broadcast).sum(axis=(0,2,3)) / n_pixels)
+        stdx = np.sqrt(np.nansum(((X_masked - meanx[None,:,None,None])**2) * mask_broadcast, axis=(0,2,3)) / n_pixels)
+        stdf = np.sqrt(np.nansum(((F_masked - meanf[None,:,None,None])**2) * mask_broadcast, axis=(0,2,3)) / n_pixels)
         return meanx, stdx, meanf, stdf
 
     def __getitem__(self, idx):

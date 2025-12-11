@@ -26,4 +26,5 @@ __pycache__
 
 # data files and results
 /run/results/*
+/run/global/*
 /datasets/*

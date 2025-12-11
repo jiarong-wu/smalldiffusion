@@ -36,8 +36,20 @@ def read_save (readpath='/scratch/jw8736/wavecnn/data/', savepath='../datasets/'
     #     max_dspr = dspr[i][max_idx, I, J]
     #     wave_max[i] = np.stack([max_hs, max_lp, max_dm, max_dspr], axis=0)
     # np.save(savepath + 'wave_maxe.npy', wave_max)
+    
 
 if __name__=='__main__':
     readpath = '/scratch/jw8736/wave_data/raw/'
     savepath = '/scratch/jw8736/smalldiffusion/datasets/'
     read_save(readpath, savepath)
+    # Pick a region
+    # wave = np.load('../datasets/wave_mean.npy')
+    # forcing = np.load('../datasets/forcing.npy')    
+    # np.save('../datasets/train/wave.npy', wave[:401,:,50:114,0:64])
+    # np.save('../datasets/train/forcing.npy', forcing[:401,:,50:114,0:64])
+    # np.save('../datasets/test/wave.npy', wave[402:,:,50:114,0:64])
+    # np.save('../datasets/test/forcing.npy', forcing[402:,:,50:114,0:64])
+
+    # mask = np.load('../datasets/mask.npy')
+    # np.save('../datasets/train/mask.npy', mask[50:114,0:64])
+    # np.save('../datasets/test/mask.npy', mask[50:114,0:64])

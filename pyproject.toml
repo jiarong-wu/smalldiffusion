@@ -55,13 +55,20 @@ examples = [
   "datasets",
   "jupyter",
   "matplotlib",
-  "torch_ema",
+  "torch-ema",
 ]
 
 [build-system]
 requires = ["setuptools>=62"]
 build-backend = "setuptools.build_meta"
 
+# Had to add this for pip install -e . (Jiarong Wu)
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+# Had to add this for pip install -e . (Jiarong Wu)
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 markers = [

@@ -5,18 +5,18 @@ from matplotlib import pyplot as plt
 # x_true: true wave data, shape (C, H, W)
 # f: forcing data, shape (C_f, H, W)
 def plot_sample(x, x_true, f):
-    fig, axes = plt.subplots(2, 6, figsize=[22, 6], dpi=100)
+    fig, axes = plt.subplots(2, 6, figsize=[44, 6], dpi=100)
     titles = ['wave height','wave length','direction','spread','wind u','wind v']
     imgs = [
         axes[0, 0].imshow(x_true[0], vmin=0, vmax=10, cmap='Blues'),
-        axes[0, 1].imshow(x_true[1], vmin=0, vmax=600, cmap='Reds'),
+        axes[0, 1].imshow(x_true[1], vmin=0, vmax=200, cmap='Reds'),
         axes[0, 2].imshow(x_true[2], vmin=0, vmax=360, cmap='twilight_r'),
         axes[0, 3].imshow(x_true[3], vmin=0, vmax=90, cmap='Grays'),
         axes[0, 4].imshow(f[0]),
         axes[0, 5].imshow(f[1]),
     ]
     imgs_sample =[
-        axes[1, 0].imshow(x[0], vmin=0, vmax=15, cmap='Blues'),
+        axes[1, 0].imshow(x[0], vmin=0, vmax=10, cmap='Blues'),
         axes[1, 1].imshow(x[1], vmin=0, vmax=200, cmap='Reds'),
         axes[1, 2].imshow(x[2], vmin=0, vmax=360, cmap='twilight_r'),
         axes[1, 3].imshow(x[3], vmin=0, vmax=90, cmap='Grays'),
