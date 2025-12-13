@@ -193,9 +193,11 @@ class Unet(nn.Module, ModelMixin):
         # out
         return self.out_layer(h)
     
-    
+
+from typing import Tuple
 class myUnet(nn.Module, ModelMixin):
     def __init__(self, in_dim, in_ch, out_ch, precond_ch,
+                 scale            : Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor, torch.FloatTensor],
                  ch               = 128,
                  ch_mult          = (1,2,2,2),
                  embed_ch_mult    = 4,
@@ -213,6 +215,12 @@ class myUnet(nn.Module, ModelMixin):
         self.precond_ch = precond_ch
         self.input_dims = (in_ch, in_dim, in_dim)
         self.temb_ch = self.ch * embed_ch_mult
+        
+        # Saving scales for construction of dataset
+        self.register_buffer('meanx', scale[0])
+        self.register_buffer('stdx', scale[1])
+        self.register_buffer('meanf', scale[2])
+        self.register_buffer('stdf', scale[3])
 
         # Embeddings
         self.sig_embed = sig_embed or SigmaEmbedderSinCos(self.temb_ch)
