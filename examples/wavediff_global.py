@@ -68,8 +68,9 @@ def main(train_batch_size=1024, epochs=300, sample_batch_size=64, RESUME=False, 
 
     schedule = ScheduleLogLinear(sigma_min=0.01, sigma_max=20, N=80)
     
-    # in_ch: number of condition channels + 1 for noise
+    # in_ch: number of predicted quantities
     # out_ch: number of predicted quantities
+    # precond_ch: number of conditional fields
     model = Scaled(myUnet)(in_dim=320, in_ch=4, out_ch=4, ch=64, precond_ch=4, 
                            scale=(train.meanx, train.stdx, train.meanf, train.stdf),
                            ch_mult=(1, 2, 2), attn_resolutions=(16,))    

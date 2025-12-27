@@ -231,6 +231,7 @@ class myUnet(nn.Module, ModelMixin):
         # Downsampling
         curr_res = in_dim
         in_ch_dim = [ch * m for m in (1,)+ch_mult]
+        # Only the first conv layer takes precond channels
         self.conv_in = torch.nn.Conv2d(in_ch+precond_ch, self.ch, kernel_size=3, stride=1, padding=1)
         self.downs = nn.ModuleList()
         for i, (block_in, block_out) in enumerate(pairwise(in_ch_dim)):

@@ -78,7 +78,9 @@ class ScheduleCosine(Schedule):
 def generate_train_sample(x0: Union[torch.FloatTensor, Tuple[torch.FloatTensor, torch.FloatTensor]],
                           schedule: Schedule, conditional: bool=False):
     cond = x0[1] if conditional else None
+    # print('cond dim: ', cond.shape)
     x0   = x0[0] if conditional else x0
+    # print('cond dim: ', x0.shape)
     sigma = schedule.sample_batch(x0)
     while len(sigma.shape) < len(x0.shape):
         sigma = sigma.unsqueeze(-1)
@@ -111,30 +113,33 @@ def training_loop(loader      : DataLoader,
             yield SimpleNamespace(**locals()) # For extracting training statistics
             accelerator.backward(loss)
             optimizer.step()
-            
-def my_training_loop(loader      : DataLoader,
+
+### Work with dataloader that will return a mask
+def masked_training_loop(loader      : DataLoader,
                   model       : nn.Module,
                   schedule    : Schedule,
                   accelerator : Optional[Accelerator] = None,
                   epochs      : int = 10000,
                   lr          : float = 1e-3,
-                  conditional : bool = True,
-                  mask        : Optional[torch.FloatTensor] = None):
+                  conditional : bool = True):
     accelerator = accelerator or Accelerator()
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     model, optimizer, loader = accelerator.prepare(model, optimizer, loader)
     for _ in (pbar := tqdm(range(epochs))):
-        for x, f in loader:
+        for x, f, mask in loader:
             model.train()
             optimizer.zero_grad()
             x0 = [x, f] # Concatenate inputs and conditions
             x0, sigma, eps, cond = generate_train_sample(x0, schedule, conditional)
             # Add mask to noise if provided (mask shape: (1, 1, H, W))
             if mask is not None:
-                eps = eps * mask.to(eps.device)
-            # Chatgpt suggusted this change accelerator.unwrap_model(model) and it worked
-            loss = accelerator.unwrap_model(model).get_loss(x0, sigma, eps, cond=cond)
-            # loss = model.get_loss(x0, sigma, eps, cond=cond)
+                mask.to(eps.device)
+                eps = eps * mask
+                loss = accelerator.unwrap_model(model).get_loss_masked(x0, sigma, eps, mask=mask, cond=cond)
+            else:
+                # Chatgpt suggusted this change accelerator.unwrap_model(model) and it worked
+                loss = accelerator.unwrap_model(model).get_loss(x0, sigma, eps, cond=cond)
+                # loss = model.get_loss(x0, sigma, eps, cond=cond)
             yield SimpleNamespace(**locals()) # For extracting training statistics
             accelerator.backward(loss)
             optimizer.step()
@@ -156,7 +161,7 @@ def samples(model      : nn.Module,
             mask       : Optional[torch.FloatTensor] = None):
     model.eval()
     accelerator = accelerator or Accelerator()
-    # Enforce mask fif provided (mask shape: (1, 1, H, W))
+    # Enforce mask if provided (mask shape: (1, 1, H, W))
     if xt is None:
         if mask is not None:
             xt = model.rand_input(batchsize).to(accelerator.device) * sigmas[0] * mask.to(accelerator.device)

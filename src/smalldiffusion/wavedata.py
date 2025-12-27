@@ -8,14 +8,14 @@ from pathlib import Path
 class MultiFileNpyData(Dataset):
     def __init__(self, 
         file_list,  # List of tuples: [(Xname, Fname), ...] for each month
-        maskname, 
+        landmaskname=None, use_icymask=True,
         compute_stats=True,
         meanx=None, stdx=None, meanf=None, stdf=None
     ):
         """
         Args:
             file_list: List of tuples, each containing (X_filepath, F_filepath) for one month
-            maskname: Path to mask file
+            maskname: Path to mask file (static mask only)
             compute_stats: Whether to compute mean/std from data
             meanx, stdx, meanf, stdf: Precomputed statistics (optional)
         """
@@ -32,7 +32,7 @@ class MultiFileNpyData(Dataset):
             f_mmap = np.load(f_path, mmap_mode="r")
             
             self.X_files.append(x_mmap)
-            self.F_files.append(f_mmap[:, 0:4])  # Keep consistent with original
+            self.F_files.append(f_mmap[:, 0:3])  # Load U, V, and icymask
             
             file_len = len(x_mmap) - 1  # -1 to prevent last sample
             self.file_lengths.append(file_len)
@@ -40,13 +40,19 @@ class MultiFileNpyData(Dataset):
         
         self.total_length = self.cumulative_lengths[-1]
         
-        # Load mask
-        self.mask = np.load(maskname)
-        
+        # Load mask (fixed land and from mask file)
+        # Used for data transform
+        if landmaskname != None:
+            self.landmask = np.load(landmaskname)
+        # Optional: use icymask (time dependent and frm F_files) for e.g. loss
+        self.use_icymask = use_icymask
+
         # Compute or load statistics
         if compute_stats:
             print("Computing dataset mean and std across all files...")
             meanx, stdx, meanf, stdf = self._compute_mean_std()
+            meanf[2] = 0.0  # icymask not normalized
+            stdf[2] = 1.0  # icymask not normalized
         else:
             assert meanx is not None and stdx is not None, "Must provide meanx/stdx when compute_stats=False"
             assert meanf is not None and stdf is not None, "Must provide meanf/stdf when compute_stats=False"
@@ -85,10 +91,7 @@ class MultiFileNpyData(Dataset):
         return self.total_length
     
     def _compute_mean_std(self):
-        """Compute channel-wise mean and std across all files."""
-        mask = self.mask.astype(bool)
-        mask_broadcast = mask[None, None, :, :]
-        
+        """Compute channel-wise mean and std across all files."""           
         # Get number of channels from first file
         n_channels_x = self.X_files[0].shape[1]
         n_channels_f = self.F_files[0].shape[1]
@@ -102,10 +105,19 @@ class MultiFileNpyData(Dataset):
         
         # Accumulate statistics from each file
         for x_file, f_file in zip(self.X_files, self.F_files):
-            n_samples = len(x_file)
-            n_valid_pixels = mask.sum() * n_samples
-            total_pixels += n_valid_pixels
-            
+            if self.use_icymask:
+                mask = f_file[:, 2, :, :]  
+                mask_broadcast = mask[:, None, :, :].astype(bool)   
+                total_pixels += mask_broadcast.sum()
+                # print(total_pixels)
+            else:
+                mask = self.landmask.astype(bool)
+                mask_broadcast = mask[None, None, :, :]
+                n_samples = len(x_file)
+                n_valid_pixels = mask.sum() * n_samples
+                total_pixels += n_valid_pixels
+                # print(total_pixels)
+           
             # Apply mask
             X_masked = x_file * mask_broadcast
             F_masked = f_file * mask_broadcast
@@ -138,8 +150,9 @@ class MultiFileNpyData(Dataset):
         # Apply transforms
         x = self.tf_x(x)
         f = self.tf_f(f)
+        mask = f[[2],:,:]
         
-        return x, f
+        return x, f, mask
 
 ### Masked dataset functions and class. 
 
@@ -162,8 +175,8 @@ class npyDataResized(MultiFileNpyData):
     def __init__(self, *args, resize_x=(320,320), resize_f=(320,320), **kwargs):
         super().__init__(*args, **kwargs)  # call original __init__
 
-        self.mask_original = torch.tensor(self.mask.astype(bool))[None, :, :].float()
-        self.mask_resized = tf.Resize(resize_x)(self.mask_original)
+        self.landmask_original = torch.tensor(self.landmask.astype(bool))[None, :, :].float()
+        self.landmask_resized = tf.Resize(resize_x)(self.landmask_original)
         self.original_H = self.X_files[0].shape[2]
         self.original_W = self.X_files[0].shape[3]
         
@@ -172,26 +185,26 @@ class npyDataResized(MultiFileNpyData):
             FillNaN(0.0),
             tf.Resize(resize_x),
             tf.Normalize(self.meanx.tolist(), self.stdx.tolist()),
-            Mask(self.mask_resized)
+            Mask(self.landmask_resized)
         ])
         self.tf_f = tf.Compose([
             FillNaN(0.0),
             tf.Resize(resize_f),
             tf.Normalize(self.meanf.tolist(), self.stdf.tolist()),
-            Mask(self.mask_resized)
+            Mask(self.landmask_resized)
         ])
         # Inverse transforms
         self.inv_tf_x = tf.Compose([
             tf.Resize((self.original_H, self.original_W)),
             tf.Normalize(mean=[0]*len(self.meanx), std=(1/self.stdx).tolist()),
             tf.Normalize(mean=(-self.meanx).tolist(), std=[1]*len(self.stdx)),
-            Mask(self.mask_original)
+            Mask(self.landmask_original)
         ])
         self.inv_tf_f = tf.Compose([
             tf.Resize((self.original_H, self.original_W)),
             tf.Normalize(mean=[0]*len(self.meanf), std=(1/self.stdf).tolist()),
             tf.Normalize(mean=(-self.meanf).tolist(), std=[1]*len(self.stdf)),
-            Mask(self.mask_original)
+            Mask(self.landmask_original)
         ])
 
 

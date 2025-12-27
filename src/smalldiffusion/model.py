@@ -17,6 +17,13 @@ class ModelMixin:
     def get_loss(self, x0, sigma, eps, cond=None, loss=nn.MSELoss):
         return loss()(eps, self(x0 + sigma * eps, sigma, cond=cond))
 
+    # Only predict on not masked part (since eps also is masked    
+    def get_loss_masked(self, x0, sigma, eps, cond=None, mask=None, loss=nn.MSELoss):
+        if mask != None:
+            return loss()(eps, self(x0 + sigma * eps, sigma, cond=cond)*mask)
+        else:
+            print('Should provide mask!')
+
     def predict_eps(self, x, sigma, cond=None):
         return self(x, sigma, cond=cond)
 

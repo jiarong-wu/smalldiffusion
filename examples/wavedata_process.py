@@ -12,8 +12,13 @@ def read_save_mean (readpath='/scratch/jw8736/wavecnn/data/', savepath='../datas
     mean = np.stack([hs_mean, lp_mean, dir_mean, spr_mean], axis=0)
     mean = np.swapaxes(mean, 0, 1)
     # np.save(savepath + 'wave_mean.npy', mean)
+    
     ### Generate forcing data
-    forcing = np.stack([ds.uwnd.values, ds.vwnd.values, ds.dpt.values, ds.ice.values], axis=0)
+    # Icy mask
+    criterion = ds.dpt.isnull()
+    mask = xr.where(criterion == 0, 1, 0)
+    icymask = xr.where((mask == 0) | (ds.ice > 0), 0, 1)
+    forcing = np.stack([ds.uwnd.values, ds.vwnd.values, icymask.values, ds.dpt.values, ds.ice.values], axis=0)
     forcing = np.swapaxes(forcing, 0, 1)
     # np.save(savepath + 'forcing.npy', np.swapaxes(forcing, 0, 1))
     return mean, forcing
@@ -44,13 +49,16 @@ def read_save_maxe (readpath='/scratch/jw8736/wavecnn/data/', savepath='../datas
     
 
 ''' For now only do the mean.
-    Try working on the maxe data later. '''
+    Try working on the maxe data later. 
+    Training: 2011-01 to 2011-12
+    Testing: 2008-04, 2008-12
+'''
     
 if __name__=='__main__':
     readpath = '/global/homes/j/jiarongw/scratch_folder/wave_data/raw/'
-    savepath = '/global/homes/j/jiarongw/scratch_folder/wave_data/test_global/'
-    year = 2008
-    for month in (4,12):
+    savepath = '/global/homes/j/jiarongw/scratch_folder/wave_data/train_global/'
+    year = 2011
+    for month in range(1,13):
         print('Processing year: {}, month: {} ...'.format(year, month))
         wave, forcing = read_save_mean(readpath, savepath, year, month)
         # Global but remove three latitude rows
