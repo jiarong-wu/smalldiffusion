@@ -57,7 +57,7 @@ def read_save_maxe (readpath='/scratch/jw8736/wavecnn/data/', savepath='../datas
 if __name__=='__main__':
     readpath = '/global/homes/j/jiarongw/scratch_folder/wave_data/raw/'
     savepath = '/global/homes/j/jiarongw/scratch_folder/wave_data/train_global/'
-    year = 2011
+    year = 2020
     for month in range(1,13):
         print('Processing year: {}, month: {} ...'.format(year, month))
         wave, forcing = read_save_mean(readpath, savepath, year, month)

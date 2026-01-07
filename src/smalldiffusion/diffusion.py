@@ -125,7 +125,8 @@ def masked_training_loop(loader      : DataLoader,
     accelerator = accelerator or Accelerator()
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     model, optimizer, loader = accelerator.prepare(model, optimizer, loader)
-    for _ in (pbar := tqdm(range(epochs))):
+    global_step = 0
+    for epoch in (pbar := tqdm(range(epochs))):
         for x, f, mask in loader:
             model.train()
             optimizer.zero_grad()
@@ -139,10 +140,15 @@ def masked_training_loop(loader      : DataLoader,
             else:
                 # Chatgpt suggusted this change accelerator.unwrap_model(model) and it worked
                 loss = accelerator.unwrap_model(model).get_loss(x0, sigma, eps, cond=cond)
-                # loss = model.get_loss(x0, sigma, eps, cond=cond)
-            yield SimpleNamespace(**locals()) # For extracting training statistics
+                # loss = model.get_loss(x0, sigma, eps, cond=cond)               
             accelerator.backward(loss)
             optimizer.step()
+            yield SimpleNamespace(
+                loss=loss.detach(), step=global_step, epoch=epoch, pbar=pbar,
+            )
+            global_step += 1
+            
+
 
 # Generalizes most commonly-used samplers:
 #   DDPM       : gam=1, mu=0.5

@@ -118,10 +118,14 @@ class MultiFileNpyData(Dataset):
                 total_pixels += n_valid_pixels
                 # print(total_pixels)
            
-            # Apply mask
-            X_masked = x_file * mask_broadcast
-            F_masked = f_file * mask_broadcast
+            # Preprocess x_file: log1p on channel 0
+            x_file_proc = x_file.copy()                # avoid modifying mmap
+            x_file_proc[:, 0, :, :] = np.log1p(x_file_proc[:, 0, :, :])
             
+            # Apply mask
+            X_masked = x_file_proc * mask_broadcast
+            F_masked = f_file * mask_broadcast
+        
             # Accumulate sums
             sum_x += np.nansum(X_masked, axis=(0, 2, 3))
             sum_f += np.nansum(F_masked, axis=(0, 2, 3))
@@ -137,6 +141,17 @@ class MultiFileNpyData(Dataset):
         stdf = np.sqrt(sum_sq_f / total_pixels - meanf**2)
         
         return meanx, stdx, meanf, stdf
+    
+    def invert_x(self, x):
+        # x of shape C*H*W
+        x = self.inv_tf_x(x)
+        x[0] = torch.expm1(x[0])   # inverse of log1p
+        return x
+    
+    def invert_f(self, f):
+        # f of shape C*H*W
+        f = self.inv_tf_f(f)
+        return f
 
     def __getitem__(self, idx):
         """Get item by global index - automatically finds correct file."""
@@ -144,7 +159,9 @@ class MultiFileNpyData(Dataset):
         file_idx, local_idx = self._get_file_and_local_idx(idx)
         
         # Load from the appropriate file
-        x = torch.from_numpy(self.X_files[file_idx][local_idx]).float()
+        x = self.X_files[file_idx][local_idx].copy()
+        x[0] = np.log1p(x[0])
+        x = torch.from_numpy(x).float()
         f = torch.from_numpy(self.F_files[file_idx][local_idx]).float()
         
         # Apply transforms
@@ -206,6 +223,7 @@ class npyDataResized(MultiFileNpyData):
             tf.Normalize(mean=(-self.meanf).tolist(), std=[1]*len(self.stdf)),
             Mask(self.landmask_original)
         ])
+
 
 
 # Example usage:

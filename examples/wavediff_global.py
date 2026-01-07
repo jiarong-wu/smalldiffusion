@@ -11,123 +11,149 @@ import torch.distributed as dist
 from smalldiffusion.model_unet import myUnet
 from smalldiffusion.model import Scaled
 from smalldiffusion.wavedata import npyDataResized
-from smalldiffusion.diffusion import ScheduleLogLinear, samples, my_training_loop
+from smalldiffusion.diffusion import ScheduleLogLinear, ScheduleDDPM, samples, masked_training_loop
 
-from waveutils import plot_sample
+from waveutils import evaluate, sample_and_save
 
 ### TODO: refine this to reuse mean and std stats from model reload. And multi-GPU case for computing dataset stats
 
-def main(train_batch_size=1024, epochs=300, sample_batch_size=64, RESUME=False, weights_file=None):
+def main(path, train_batch_size=1024, epochs=300, sample_batch_size=64, RESUME=False, weights_file=None,
+         ckpt_everyn_epoch=4, sample_everyn_epoch=1, eval_everyn_step=100):
     # Setup
     print(torch.cuda.is_available())
-    a = Accelerator(); print(a.state)
+    a = Accelerator(mixed_precision="fp16") 
+    print(a.state)
     
-    # if a.is_main_process: ???
     train_file_path = '/global/homes/j/jiarongw/scratch_folder/wave_data/train_global/'
-    train_file_names = [(f'wave_2011{i:02d}', f'forcing_2011{i:02d}') for i in range(1, 13)]
+    train_file_names = [
+        *( (f'wave_2010{i:02d}', f'forcing_2010{i:02d}') for i in range(1, 13) ),
+        *( (f'wave_2011{i:02d}', f'forcing_2011{i:02d}') for i in range(1, 13) ),
+        *( (f'wave_2012{i:02d}', f'forcing_2012{i:02d}') for i in range(1, 13) ),
+        *( (f'wave_2013{i:02d}', f'forcing_2013{i:02d}') for i in range(1, 13) ),
+        *( (f'wave_2014{i:02d}', f'forcing_2014{i:02d}') for i in range(1, 13) ),
+        *( (f'wave_2015{i:02d}', f'forcing_2015{i:02d}') for i in range(1, 13) ),
+        *( (f'wave_2016{i:02d}', f'forcing_2016{i:02d}') for i in range(1, 13) ),
+        *( (f'wave_2017{i:02d}', f'forcing_2017{i:02d}') for i in range(1, 13) ),
+        *( (f'wave_2018{i:02d}', f'forcing_2018{i:02d}') for i in range(1, 13) ),
+        *( (f'wave_2019{i:02d}', f'forcing_2019{i:02d}') for i in range(1, 13) ),
+        *( (f'wave_2020{i:02d}', f'forcing_2020{i:02d}') for i in range(1, 13) ),
+        *( (f'wave_2021{i:02d}', f'forcing_2021{i:02d}') for i in range(1, 13) ),
+        *( (f'wave_2022{i:02d}', f'forcing_2022{i:02d}') for i in range(1, 13) ),
+    ]
     train_file_list = [(os.path.join(train_file_path, f'{x}.npy'), 
-                        os.path.join(train_file_path, f'{f}.npy')) for x, f in train_file_names]
-    # try assigning scale:
-    # test.meanx tensor([  2.3457, 160.9466, 191.7947,  44.5279])
-    # test.stdx tensor([  1.5441, 120.1778,  95.0668,  15.1788])
-    # test.meanf tensor([4.7543e-02, 1.7224e-01, 3.4807e+03, 1.0555e-01])
-    # test.stdf tensor([6.4509e+00, 5.3636e+00, 1.7002e+03, 2.8770e-01])
-    # train = npyDataResized(
-    #     train_file_list,
-    #     resize_x=(320,320), resize_f=(320,320), 
-    #     maskname=os.path.join(train_file_path, 'mask.npy'),
-    #     compute_stats=True
-    # )
+                        os.path.join(train_file_path, f'{f}.npy')) for x, f in train_file_names]   
+    stats_file = os.path.join(train_file_path, 'stats.npz')
+    stats = np.load(stats_file)
+    meanx, stdx = stats['meanx'], stats['stdx']
+    meanf, stdf = stats['meanf'], stats['stdf']
     train = npyDataResized(
         train_file_list,
         resize_x=(320,320), resize_f=(320,320), 
-        maskname=os.path.join(train_file_path, 'mask.npy'),
-        compute_stats=False,
-        meanx=torch.tensor([0., 0., 0., 0.]),
-        stdx=torch.tensor([5., 100., 360., 90.]),
-        meanf=torch.tensor([0., 0., 0., 0.]),            
-        stdf=torch.tensor([10., 10., 1000., 1.])
+        landmaskname=os.path.join(train_file_path, 'mask.npy'),
+        use_icymask=True, compute_stats=False,
+        meanx=meanx, stdx=stdx, meanf=meanf, stdf=stdf
     )
-
     test_file_path = '/global/homes/j/jiarongw/scratch_folder/wave_data/test_global/'
     test_file_names = [('wave_200804', 'forcing_200804')]
     test_file_list = [(os.path.join(test_file_path, f'{x}.npy'), 
-                    os.path.join(test_file_path, f'{f}.npy')) for x, f in test_file_names]
+                       os.path.join(test_file_path, f'{f}.npy')) for x, f in test_file_names]
     test = npyDataResized(
         test_file_list,
         resize_x=(320,320), resize_f=(320,320), 
-        maskname=os.path.join(test_file_path, 'mask.npy'),
-        compute_stats=False,
-        meanx=train.meanx, stdx=train.stdx, meanf=train.meanf, stdf=train.stdf
-    )    
+        landmaskname=os.path.join(test_file_path, 'mask.npy'),
+        use_icymask=True, compute_stats=False,
+        meanx=meanx, stdx=stdx, meanf=meanf, stdf=stdf
+    )
 
     loader = DataLoader(train, batch_size=train_batch_size, shuffle=True)
-    loader_test = DataLoader(test, batch_size=sample_batch_size, shuffle=True)  # Used for generating samples during training
-    loader_test_iter = iter(loader_test)   
-    mask_batched = train.mask_resized[None, :, :, :]
+    loader_test = DataLoader(test, batch_size=sample_batch_size, shuffle=True)  # Used for generating samples during training  
 
-    schedule = ScheduleLogLinear(sigma_min=0.01, sigma_max=20, N=80)
+    schedule_infer = ScheduleLogLinear(sigma_min=0.01, sigma_max=60, N=80)
+    schedule_train = ScheduleLogLinear(sigma_min=0.01, sigma_max=100, N=200)
+    # schedule_train = ScheduleDDPM()
     
     # in_ch: number of predicted quantities
     # out_ch: number of predicted quantities
     # precond_ch: number of conditional fields
-    model = Scaled(myUnet)(in_dim=320, in_ch=4, out_ch=4, ch=64, precond_ch=4, 
+    model = Scaled(myUnet)(in_dim=320, in_ch=4, out_ch=4, ch=128, precond_ch=3, 
                            scale=(train.meanx, train.stdx, train.meanf, train.stdf),
                            ch_mult=(1, 2, 2), attn_resolutions=(16,))    
-    if RESUME and weights_file is not None:
-        model.load_state_dict(torch.load(weights_file, map_location='cpu'))
 
     # Train
-    log_file = open("../run/global/test/loss_log.txt", "w")
+    log_file = open(path + "loss_log.txt", "w")
+    test_log_file = open(path + "test_loss_log.txt", "w")
     ema = EMA(model.parameters(), decay=0.999)
-    ema.to(a.device)
-    # Notice it was lr 7e-4 before
-    for ns in my_training_loop(loader, model, schedule, epochs=epochs, lr=2e-4, accelerator=a, 
-                               conditional=True, mask=mask_batched):
-        log_file.write(f"{ns.loss.item():.5}\n")
-        ns.pbar.set_description(f'Loss={ns.loss.item():.5}')
-        ema.update()
-    log_file.close()
     
-    if a.distributed_type != "NO" and dist.is_available() and dist.is_initialized():
-        a.wait_for_everyone()
+    if RESUME and weights_file is not None:
+        ckpt = torch.load(weights_file, map_location="cpu")
+        model.load_state_dict(ckpt["model"])
+        ema.load_state_dict(ckpt["ema"])
+        # start_epoch = ckpt["epoch"]   # I can pass those to the training loop to count for epochs better
+        # start_step = ckpt.get("step", 0)   # Same with steps
+        # if a.is_main_process:
+        #     print(f"Resuming from epoch {start_epoch}, step {start_step}")
+              
+    ema.to(a.device)
+    
+    train_iter = masked_training_loop(
+        loader, model, schedule_train,
+        lr=7e-4, epochs=epochs, accelerator=a, conditional=True,
+    )
 
-    # Sampling — ONLY RANK 0
-    if a.is_main_process:
-        with ema.average_parameters():
-            torch.save(model.state_dict(), '../run/global/test/' + 'checkpoint.pth')
-            # Conditioned sampling
-            x, f = next(loader_test_iter)
-            *xt, x0 = samples(model, schedule.sample_sigmas(40), gam=1.6, cond=f,
-                              batchsize=sample_batch_size, accelerator=a, mask=mask_batched)
-            # TODO: write some diagnostic code to visualize samples
-            # save_image(img_normalize(make_grid(x0)), 'samples.png')
-            for i in range(sample_batch_size):
-                x0_ = train.inv_tf_x(x0[i])
-                x_ = train.inv_tf_x(x[i])
-                f_ = train.inv_tf_f(f[i])
-                print(x.unsqueeze(0).detach().cpu().shape)
-                fig = plot_sample(x_.detach().cpu().numpy()[:,::-1],  # truth
-                                  x0_.unsqueeze(0).detach().cpu().numpy()[:,:,::-1], # sample
-                                  f_.detach().cpu().numpy()[:,::-1])
-                fig.savefig('../run/global/test/' + f'sample{i}.png')
+    last_epoch = -1
+    
+    for ns in train_iter:
+        # ---- logging (only main process) ----
+        if a.is_main_process:
+            log_file.write(f"{ns.step}, {ns.loss.item():.6f}\n")
+            log_file.flush()
+            ns.pbar.set_description(f"Loss={ns.loss.item():.5f}")        
             
-        
-    # 3) Make sure everyone waits until the main process finished sampling/saving
+        ema.update()
+
+        # ---- evaluation ----
+        if ns.step % eval_everyn_step == 0:
+            a.wait_for_everyone()
+            if a.is_main_process:     
+                print('Evaluating... at step ', ns.step)
+                val_loss = evaluate(model, ema, loader_test, schedule_train, a) # Compute on all GPUs but gather
+                test_log_file.write(f"{ns.step}, {val_loss.item():.6f}\n")
+                test_log_file.flush()
+            a.wait_for_everyone()
+
+        # ---- epoch-based triggers ----
+        if ns.epoch != last_epoch:
+            last_epoch = ns.epoch
+            a.wait_for_everyone()
+            
+            # ---- checkpoint ----
+            if ns.epoch % ckpt_everyn_epoch == 0:
+                a.wait_for_everyone()
+                if a.is_main_process:
+                    print('Saving checkpoint... at epoch ', ns.epoch)
+                    a.save({"model": a.unwrap_model(model).state_dict(), "ema": ema.state_dict(), "epoch": ns.epoch},
+                            path + f"ckpt_{ns.epoch}.pt")
+                a.wait_for_everyone()
+
+            # ---- sampling ----
+            if ns.epoch % sample_everyn_epoch == 0:
+                a.wait_for_everyone()
+                if a.is_main_process:
+                    print('Sampling... at epoch ', ns.epoch)
+                    sample_and_save(model, ema, loader_test, schedule_infer, a, path, sample_batch_size, 
+                                    test=test, filename=f"sample_epoch{ns.epoch}")
+                a.wait_for_everyone()
+
+    log_file.close()
+    test_log_file.close()
+
     if a.distributed_type != "NO" and dist.is_available() and dist.is_initialized():
         a.wait_for_everyone()
-
-    # 4) Now end training / destroy process group safely
-    #    Prefer accelerate's cleanup; call end_training last.
-    try:
-        a.end_training()
-    except Exception:
-        # As a fallback, explicitly destroy the group if still initialized
-        if dist.is_available() and dist.is_initialized():
-            dist.destroy_process_group()
+    a.end_training()
             
         
 if __name__=='__main__':
-    # main(train_batch_size=16, epochs=100, sample_batch_size=2, RESUME=True, weights_file='../run/global/checkpoint_100.pth')
-    main(train_batch_size=16, epochs=100, sample_batch_size=2, RESUME=False)    
     
+    path = '/global/homes/j/jiarongw/smalldiffusion/run/global/log1p/loglinear4/'
+    main(path, train_batch_size=8, epochs=9, sample_batch_size=2, RESUME=False)    
+    # main(path, train_batch_size=8, epochs=10, sample_batch_size=2, RESUME=True, weights_file=path+'ckpt_3.pt')
