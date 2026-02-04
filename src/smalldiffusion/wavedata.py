@@ -142,6 +142,46 @@ class MultiFileNpyData(Dataset):
         
         return meanx, stdx, meanf, stdf
     
+    def compute_clim_map(self):
+        """Compute channel-wise mean and std across all files."""           
+        # Get number of total samples
+        n_batch_x = np.array([self.X_files[i].shape[0] for i in range(len(self.X_files))]).sum()
+        n_batch_f = np.array([self.F_files[i].shape[0] for i in range(len(self.F_files))]).sum()
+
+        sum_x = np.zeros(self.X_files[0].shape[1:])
+        sum_f = np.zeros(self.F_files[0].shape[1:])
+        sum_sq_x = np.zeros(self.X_files[0].shape[1:])
+        sum_sq_f = np.zeros(self.F_files[0].shape[1:])
+        
+        # Accumulate statistics from each file
+        for x_file, f_file in zip(self.X_files, self.F_files):
+            if self.use_icymask:
+                mask = f_file[:, 2, :, :]  
+                mask_broadcast = mask[:, None, :, :].astype(bool)   
+            else:
+                mask = self.landmask.astype(bool)
+                mask_broadcast = mask[None, None, :, :] 
+            
+            # Apply mask
+            X_masked = x_file * mask_broadcast
+            F_masked = f_file * mask_broadcast
+        
+            # Accumulate sums
+            sum_x += np.nansum(X_masked, axis=(0))
+            sum_f += np.nansum(F_masked, axis=(0))
+            sum_sq_x += np.nansum(X_masked**2 * mask_broadcast, axis=(0))
+            sum_sq_f += np.nansum(F_masked**2 * mask_broadcast, axis=(0))
+        
+        # Calculate mean
+        meanx = sum_x / n_batch_x
+        meanf = sum_f / n_batch_f
+        
+        # Calculate std using accumulated sum of squares
+        stdx = np.sqrt(sum_sq_x / n_batch_x - meanx**2)
+        stdf = np.sqrt(sum_sq_f / n_batch_f - meanf**2)
+        
+        return meanx, stdx, meanf, stdf
+    
     def invert_x(self, x):
         # x of shape C*H*W
         x = self.inv_tf_x(x)
@@ -159,15 +199,19 @@ class MultiFileNpyData(Dataset):
         file_idx, local_idx = self._get_file_and_local_idx(idx)
         
         # Load from the appropriate file
-        x = self.X_files[file_idx][local_idx].copy()
-        x[0] = np.log1p(x[0])
-        x = torch.from_numpy(x).float()
+        # x = self.X_files[file_idx][local_idx].copy()
+        # x[0] = np.log1p(x[0])
+        # x = torch.from_numpy(x).float()
+        x_raw = self.X_files[file_idx][local_idx]
+        x = torch.from_numpy(x_raw).float().clone()
+        x[0] = torch.log1p(x[0]) 
         f = torch.from_numpy(self.F_files[file_idx][local_idx]).float()
         
         # Apply transforms
         x = self.tf_x(x)
         f = self.tf_f(f)
         mask = f[[2],:,:]
+
         
         return x, f, mask
 
@@ -256,3 +300,70 @@ if __name__ == "__main__":
     for x, f in dataloader:
         print(f"Batch shape: {x.shape}")
         break
+
+
+### With wind history.
+
+class npyDataWndHist(npyDataResized):
+    def __init__(self, file_list,  # List of tuples: [(Xname, Fname), ...] for each month
+        landmaskname=None, use_icymask=True,
+        compute_stats=True,
+        meanx=None, stdx=None, meanf=None, stdf=None,
+        resize_x=None, resize_f=None):
+        super().__init__(
+            file_list, landmaskname, use_icymask,
+            compute_stats, meanx, stdx, meanf, stdf,)
+        # Master class initiation ...
+        # Expand scaling for wind history (add 2 more channels)
+        self.meanf = torch.tensor([self.meanf[0], self.meanf[1], self.meanf[2], self.meanf[0], self.meanf[1]], dtype=torch.float32)
+        self.stdf = torch.tensor([self.stdf[0], self.stdf[1], self.stdf[2], self.stdf[0], self.stdf[1]], dtype=torch.float32)
+        
+        self.tf_x = tf.Compose([
+            FillNaN(0.0),
+            tf.Resize(resize_x),
+            tf.Normalize(self.meanx.tolist(), self.stdx.tolist()),
+            Mask(self.landmask_resized)
+        ])
+        self.tf_f = tf.Compose([
+            FillNaN(0.0),
+            tf.Resize(resize_f),
+            tf.Normalize(self.meanf.tolist(), self.stdf.tolist()),
+            Mask(self.landmask_resized)
+        ])
+        # Inverse transforms
+        self.inv_tf_x = tf.Compose([
+            tf.Resize((self.original_H, self.original_W)),
+            tf.Normalize(mean=[0]*len(self.meanx), std=(1/self.stdx).tolist()),
+            tf.Normalize(mean=(-self.meanx).tolist(), std=[1]*len(self.stdx)),
+            Mask(self.landmask_original)
+        ])
+        self.inv_tf_f = tf.Compose([
+            tf.Resize((self.original_H, self.original_W)),
+            tf.Normalize(mean=[0]*len(self.meanf), std=(1/self.stdf).tolist()),
+            tf.Normalize(mean=(-self.meanf).tolist(), std=[1]*len(self.stdf)),
+            Mask(self.landmask_original)
+        ])
+    
+    def __len__(self):
+        return self.total_length - 4
+    
+    def __getitem__(self, idx):
+        """Get item by global index - automatically finds correct file."""
+        # Map global index to file and local index
+        file_idx, local_idx = self._get_file_and_local_idx(idx+4)
+        file_idx_hist, local_idx_hist = self._get_file_and_local_idx(idx)
+        
+        # Load from the appropriate file
+        x = self.X_files[file_idx][local_idx].copy()
+        x[0] = np.log1p(x[0])
+        x = torch.from_numpy(x).float()
+        f = torch.from_numpy(self.F_files[file_idx][local_idx]).float()
+        f_hist = torch.from_numpy(self.F_files[file_idx_hist][local_idx_hist]).float()
+        f = torch.cat([f, f_hist[[0,1],:,:]], dim=0)  # Append historical wind speed and direction
+        
+        # Apply transforms
+        x = self.tf_x(x)
+        f = self.tf_f(f)
+        mask = f[[2],:,:]
+        
+        return x, f, mask

@@ -68,14 +68,18 @@ def main(path, train_batch_size=1024, epochs=300, sample_batch_size=64, RESUME=F
     loader = DataLoader(train, batch_size=train_batch_size, shuffle=True)
     loader_test = DataLoader(test, batch_size=sample_batch_size, shuffle=True)  # Used for generating samples during training  
 
-    schedule_infer = ScheduleLogLinear(sigma_min=0.01, sigma_max=60, N=80)
-    schedule_train = ScheduleLogLinear(sigma_min=0.01, sigma_max=100, N=200)
-    # schedule_train = ScheduleDDPM()
+    # schedule_infer = ScheduleLogLinear(sigma_min=0.01, sigma_max=60, N=80)
+    # schedule_train = ScheduleLogLinear(sigma_min=0.01, sigma_max=100, N=200)
+    schedule_infer = ScheduleDDPM()
+    schedule_train = ScheduleDDPM()
     
     # in_ch: number of predicted quantities
     # out_ch: number of predicted quantities
     # precond_ch: number of conditional fields
-    model = Scaled(myUnet)(in_dim=320, in_ch=4, out_ch=4, ch=128, precond_ch=3, 
+    # model = Scaled(myUnet)(in_dim=320, in_ch=4, out_ch=4, ch=128, precond_ch=3, 
+    #                        scale=(train.meanx, train.stdx, train.meanf, train.stdf),
+    #                        ch_mult=(1, 2, 2), attn_resolutions=(16,))    
+    model = Scaled(myUnet)(in_dim=320, in_ch=4, out_ch=4, ch=256, precond_ch=3, 
                            scale=(train.meanx, train.stdx, train.meanf, train.stdf),
                            ch_mult=(1, 2, 2), attn_resolutions=(16,))    
 
@@ -83,12 +87,13 @@ def main(path, train_batch_size=1024, epochs=300, sample_batch_size=64, RESUME=F
     log_file = open(path + "loss_log.txt", "w")
     test_log_file = open(path + "test_loss_log.txt", "w")
     ema = EMA(model.parameters(), decay=0.999)
+    start_epoch = 0
     
     if RESUME and weights_file is not None:
         ckpt = torch.load(weights_file, map_location="cpu")
         model.load_state_dict(ckpt["model"])
         ema.load_state_dict(ckpt["ema"])
-        # start_epoch = ckpt["epoch"]   # I can pass those to the training loop to count for epochs better
+        start_epoch = ckpt["epoch"]   # I can pass those to the training loop to count for epochs better
         # start_step = ckpt.get("step", 0)   # Same with steps
         # if a.is_main_process:
         #     print(f"Resuming from epoch {start_epoch}, step {start_step}")
@@ -97,7 +102,7 @@ def main(path, train_batch_size=1024, epochs=300, sample_batch_size=64, RESUME=F
     
     train_iter = masked_training_loop(
         loader, model, schedule_train,
-        lr=7e-4, epochs=epochs, accelerator=a, conditional=True,
+        lr=1e-4, epochs=epochs, accelerator=a, conditional=True, start_epoch=start_epoch
     )
 
     last_epoch = -1
@@ -154,6 +159,6 @@ def main(path, train_batch_size=1024, epochs=300, sample_batch_size=64, RESUME=F
         
 if __name__=='__main__':
     
-    path = '/global/homes/j/jiarongw/smalldiffusion/run/global/log1p/loglinear4/'
-    main(path, train_batch_size=8, epochs=9, sample_batch_size=2, RESUME=False)    
-    # main(path, train_batch_size=8, epochs=10, sample_batch_size=2, RESUME=True, weights_file=path+'ckpt_3.pt')
+    path = '/global/homes/j/jiarongw/smalldiffusion/run/global/log1p/DDPM4/'
+    main(path, train_batch_size=4, epochs=13, sample_batch_size=2, RESUME=False)    
+    # main(path, train_batch_size=8, epochs=13, sample_batch_size=2, RESUME=True, weights_file=path+'ckpt_12.pt')

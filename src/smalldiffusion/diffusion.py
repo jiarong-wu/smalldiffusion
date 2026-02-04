@@ -121,12 +121,13 @@ def masked_training_loop(loader      : DataLoader,
                   accelerator : Optional[Accelerator] = None,
                   epochs      : int = 10000,
                   lr          : float = 1e-3,
-                  conditional : bool = True):
+                  conditional : bool = True,
+                  start_epoch : int = 0):
     accelerator = accelerator or Accelerator()
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     model, optimizer, loader = accelerator.prepare(model, optimizer, loader)
     global_step = 0
-    for epoch in (pbar := tqdm(range(epochs))):
+    for epoch in (pbar := tqdm(range(start_epoch+1, start_epoch+epochs+1))):
         for x, f, mask in loader:
             model.train()
             optimizer.zero_grad()
@@ -146,9 +147,9 @@ def masked_training_loop(loader      : DataLoader,
             yield SimpleNamespace(
                 loss=loss.detach(), step=global_step, epoch=epoch, pbar=pbar,
             )
-            global_step += 1
-            
+            global_step += 1            
 
+            
 
 # Generalizes most commonly-used samplers:
 #   DDPM       : gam=1, mu=0.5
@@ -188,6 +189,60 @@ def samples(model      : nn.Module,
         # Mask here
         if mask is not None:
             xt = xt - (sig - sig_p) * eps_av + eta * model.rand_input(xt.shape[0]).to(xt) * mask.to(xt.device)
+        else:
+            xt = xt - (sig - sig_p) * eps_av + eta * model.rand_input(xt.shape[0]).to(xt) 
+        yield xt
+
+
+@torch.no_grad()
+def samples_thres(model      : nn.Module,
+            sigmas     : torch.FloatTensor, # Iterable with N+1 values for N sampling steps
+            gam        : float = 1.,        # Suggested to use gam >= 1
+            mu         : float = 0.,        # Requires mu in [0, 1)
+            cfg_scale  : int = 0.,          # 0 means no classifier-free guidance
+            batchsize  : int = 1,
+            thres      : float = 0.,
+            xt         : Optional[torch.FloatTensor] = None,
+            cond       : Optional[torch.Tensor] = None,
+            accelerator: Optional[Accelerator] = None, 
+            mask       : Optional[torch.FloatTensor] = None):
+    model.eval()
+    accelerator = accelerator or Accelerator()
+    # Enforce mask fif provided (mask shape: (1, 1, H, W))
+    if xt is None:
+        if mask is not None:
+            xt = model.rand_input(batchsize).to(accelerator.device) * sigmas[0] * mask.to(accelerator.device)
+        else:
+            xt = model.rand_input(batchsize).to(accelerator.device) * sigmas[0]   
+    if cond is not None:
+        assert cond.shape[0] == xt.shape[0], 'cond must have same shape as x!'
+        cond = cond.to(xt.device)
+    eps = None
+    for i, (sig, sig_prev) in enumerate(pairwise(sigmas)):
+        eps_prev, eps = eps, model.predict_eps_cfg(xt, sig.to(xt), cond, cfg_scale)
+        eps_av = eps * gam + eps_prev * (1-gam)  if i > 0 else eps
+        # Mask here
+        if mask is not None:
+            eps_av = eps_av * mask.to(eps_av.device)
+            
+        # Predict denoised signal
+        x0_hat = xt - sig * eps_av
+        # Enforce constraint on channel 0
+        x0_hat[:, 0, :, :] = torch.clamp(x0_hat[:, 0, :, :], min=thres.to(xt))
+        # Recompute epsilon
+        eps_av = (xt - x0_hat) / sig
+            
+        sig_p = (sig_prev/sig**mu)**(1/(1-mu)) # sig_prev == sig**mu sig_p**(1-mu)
+        eta = (sig_prev**2 - sig_p**2).sqrt()
+        # Try
+        # eta = 0
+        
+        # Mask here
+        if mask is not None:
+            xt = xt - (sig - sig_p) * eps_av + eta * model.rand_input(xt.shape[0]).to(xt) * mask.to(xt.device)
+            # Enforce constraint
+            # if sig < 5:
+            #     xt[:, 0, :, :] = torch.clamp(xt[:, 0, :, :], min=thres.to(xt))            
         else:
             xt = xt - (sig - sig_p) * eps_av + eta * model.rand_input(xt.shape[0]).to(xt) 
         yield xt

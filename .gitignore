@@ -15,6 +15,8 @@ __pycache__
 *.swp
 *.log
 *.out
+*.npy
+*.txt
 
 # Project specific
 /build/
@@ -28,3 +30,4 @@ __pycache__
 /run/results/*
 /run/global/*
 /datasets/*
+/run/plots/*
